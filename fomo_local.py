@@ -23,12 +23,8 @@ def get_new_pools(network: str, limit: int = 20) -> list:
     try:
         headers = {"User-Agent": "TradingDesk/1.0"}
         url = f"{GT}/networks/{network}/pools"
-        params = {
-            "sort": "tx_hash",
-            "order": "desc",
-            "limit": limit,
-        }
-        response = requests.get(url, params=params, headers=headers, timeout=15)
+        # No params - API returns last 20 pools by default
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
         return data.get("data", [])
@@ -86,11 +82,18 @@ def scan_universe(networks=("solana", "bsc"), pools_per_network: int = 20) -> li
             # Parse price changes
             price_changes = attrs.get("price_change_percentage", {})
             
+            # Parse name to get ticker
+            name = attrs.get("name", "UNKNOWN")
+            if "/" in name:
+                ticker = name.split("/")[0].strip()
+            else:
+                ticker = name
+            
             all_tokens.append({
                 "addr": addr,
                 "net": NET_MAP.get(net, 1399811149),
                 "net_name": net,
-                "ticker": attrs.get("name", "UNKNOWN").split("/")[0].strip() if "/" in attrs.get("name", "") else attrs.get("name", "UNKNOWN"),
+                "ticker": ticker,
                 "mcap_usd": float(attrs.get("market_cap_usd", 0) or 0),
                 "liquidity_usd": float(attrs.get("reserve_usd", 0) or 0),
                 "price_usd": float(attrs.get("base_token_price_usd", 0) or 0),
