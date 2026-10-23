@@ -75,3 +75,13 @@ This is a trading bot for real money. Start in shadow mode. Test for a week befo
 
 **Original guide**: TypeSafe Jev + FOMO.xyz (requires paid API)
 **This version**: Local Laya + GeckoTerminal (completely free)
+
+## GitHub Setup
+
+To push to GitHub, run in PowerShell:
+
+```powershell
+& "C:\Users\Dell\AppData\Local\hermes\gh-cli\bin\gh.exe" auth login
+# Follow browser prompts
+& "C:\Users\Dell\AppData\Local\hermes\gh-cli\bin\gh.exe" repo create megabrain-local-desk --public --source="C:\Users\Dell\hermes-trading-desk" --push
+```
