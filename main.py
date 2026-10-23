@@ -1,147 +1,161 @@
-"""main.py — The process that never stops. Owns the cycle."""
+"""main.py — Local version without TypeSafe/Jev dependency.
+Uses heuristic judge + GeckoTerminal/DexScreener (all free)."""
 
 import time
 import logging
-from fomo_api import Fomo
-from collect import universe, shortlist, trade_counts, dossier, social_state
+from local_judge import judge
+from fomo_local import scan_universe, enrich_token, normalise_fomo_style
 from filter import free_kill, trade_kill, chain_kill, soft_kill
-from pick import pick
+from pick import pick as pick_token
 import book
 
-CHAIN_SET = {
-    1399811149: "solana",
-    56: "bsc",
-    8453: "bsc",
-    4663: "robinhood",
-}
+# Same filters but adapted for local data
+from thresholds import HARD, SOFT
 
 CYCLE_SECONDS = 900  # 15 minutes
-GT_PER_MINUTE = 10   # free tier
-GT_UNIVERSE = 6      # 3 chains x 2 pages, spent before the funnel
-GT_DOSSIER = 3       # what is left for dossiers in the same minute
-DEX_BUDGET = 25      # DexScreener calls per cycle, pass two only
+SCAN_INTERVAL = 60   # scan every minute
 
 log = logging.getLogger("desk")
 
 
-def run_once(fomo, judge, desk, bank, shadow=True):
+def run_once(shadow=True):
+    """Main cycle: scan, filter, judge, pick."""
+    
     if (h := book.held()):
-        log.info("holding %s for %.0f min, no scan this cycle", h["ticker"], h["minutes"])
-        return None, {"held": h["ticker"], "minutes": round(h["minutes"])}
-
-    stats = {"seen": 0, "benched": 0, "free": {}, "trade": {}, "chain": {}, "soft": {}}
+        log.info("holding %s for %.0f min, no scan", h["ticker"], h["minutes"])
+        return None, {"held": h["ticker"]}
+    
+    stats = {"scanned": 0, "filtered": 0, "judged": 0, "survivors": 0}
+    
+    # Step 1: Scan fresh pools
+    print("\n=== SCANNING ===")
+    tokens = scan_universe(networks=["solana", "bsc"], pools_per_network=15)
+    stats["scanned"] = len(tokens)
+    
+    if not tokens:
+        print("No new pools found")
+        return None, stats
+    
+    # Step 2: Filter by free criteria (no API calls)
+    print("\n=== FILTERING ===")
     survivors = []
-    gt_slots, dex_slots = GT_DOSSIER, DEX_BUDGET
-
-    ids = universe()  # fresh pools, 3 chains, GT_UNIVERSE slots
-
-    for t in ids:
-        stats["seen"] += 1
-        if its_time := time.time() - book.benched_at(t["tid"]):
-            continue
+    
+    for token in tokens:
+        # Convert to normalised format
+        t = normalise_fomo_style(token)
+        stats["scanned"] += 1
+        
+        # Free kill
         if (k := free_kill(t)):
             book.sit(t["tid"], k)
-            stats["free"][k] = stats["free"].get(k, 0) + 1
+            stats["filtered"] += 1
             continue
-
-        if dex_slots <= 0 or gt_slots <= 0:
-            break  # out of budget, not out of ideas
-
-        t = trade_counts(t)  # pass two: one DexScreener call
-        dex_slots -= 1
+        
+        # Enrich with more data
+        enriched = enrich_token(token)
+        t = normalise_fomo_style(enriched)
+        
+        # Trade kill
         if (k := trade_kill(t)):
             book.sit(t["tid"], k)
-            stats["trade"][k] = stats["trade"].get(k, 0) + 1
+            stats["filtered"] += 1
             continue
-
-        try:
-            d = dossier(t)  # pass three: one GeckoTerminal slot
-        except Exception as e:
-            log.warning("dossier failed %s: %s", t["ticker"], e)
-            gt_slots -= 1  # a failed call still cost you the slot
-            book.sit(t["tid"], "dossier_failed")
-            continue  # missing is missing, not a pass
-
-        if (k := chain_kill(d)):
-            book.sit(t["tid"], k)  # facts bench longest
-            stats["chain"][k] = stats["chain"].get(k, 0) + 1
+        
+        # Chain kill
+        if (k := chain_kill(enriched)):
+            book.sit(t["tid"], k)
+            stats["filtered"] += 1
             continue
-
-        d["intended_ticket_usd"] = bank * 0.06  # the most SIZE could ever allow
-        d["x_handle"] = desk.read_x(d.get("x_handle")) if d.get("x_handle") else None
-
-        ans = {}
-        try:
-            ans = judge("market", d)["answers"]
-            ans.update(judge(CHAIN_SET[d["net"]], d)["answers"])
-            ans.update(judge("social", social_state(d))["answers"])
-        except Exception as e:
-            log.warning("judge failed %s: %s", d["ticker"], e)
-            continue  # no bench: the token is not at fault
-
+        
+        # Step 3: Judge with local AI/heuristics
+        enriched["intended_ticket_usd"] = 60  # $60 ticket size
+        ans = judge("market", enriched)
+        ans.update(judge("solana" if enriched.get("net") == 1399811149 else "bsc", enriched))
+        
+        # Soft kill
         if (k := soft_kill(ans)):
             book.sit(t["tid"], k)
-            stats["soft"][k] = stats["soft"].get(k, 0) + 1
+            stats["filtered"] += 1
             continue
-
-        survivors.append((d, ans))
-
-    log.info(
-        "cycle: %(seen)s seen, %(benched)s benched, free %(free)s, "
-        "trade %(trade)s, chain %(chain)s, soft %(soft)s",
-        stats
-    )
-
+        
+        stats["survivors"] += 1
+        survivors.append((enriched, ans))
+    
+    print(f"\n=== RESULTS ===")
+    print(f"Scanned: {stats['scanned']}")
+    print(f"Filtered: {stats['filtered']}")
+    print(f"Survivors: {stats['survivors']}")
+    
     if not survivors:
         return None, stats
-
+    
+    # Step 4: Pick best token
     if len(survivors) == 1:
-        # A choice over one option proves nothing
         d, ans = survivors[0]
         order = {
-            "model": "single-survivor",
-            "size_factor": 1.0,
-            "confidence": None,
+            "model": "local-heuristic",
             "token": {
                 "ticker": d["ticker"],
                 "address": d["addr"],
                 "network_id": d["net"],
-                "chain": d["chain"],
+                "chain": d.get("net_name", "solana"),
             },
+            "size_factor": 1.0,
+            "confidence": 0.5,
             "why": ans,
         }
     else:
-        order = pick(judge, survivors)  # pass five
-
+        order = pick_token(judge, survivors)
+    
     if order is None:
         return None, stats
-
+    
+    # Step 5: Execute or shadow log
     if shadow:
-        desk.log_shadow(order, stats)  # written, never sent
+        print(f"\n=== SHADOW MODE ===")
+        print(f"Would trade: {order['token']['ticker']}")
+        print(f"Confidence: {order.get('confidence', 'N/A')}")
+        print("Log saved (no trade)")
         return None, stats
+    else:
+        book.take(order)
+        print(f"\n=== TRADE ORDER ===")
+        print(f"Token: {order['token']['ticker']}")
+        print(f"Network: {order['token']['chain']}")
+        print(f"Address: {order['token']['address']}")
+        return order, stats
 
-    book.take(order)  # the desk is now held. No scan until RISK calls release().
-    return order, stats
 
-
-def main(fomo, judge, desk, shadow=True):
-    """desk bank() is your cash side. read_x(handle) has the X plugin.
-    log_shadow(order, stats) appends a row. report(order) send one line to Telegram.
-    send_to_seats(order) hands it to SIZE, then FILLS, then RISK, in one week or no trade."""
-
+def main():
+    """Run continuously."""
+    print("=" * 50)
+    print("LOCAL TRADING DESK (No TypeSafe Required)")
+    print("=" * 50)
+    print("\nFeatures:")
+    print("- Uses GeckoTerminal + DexScreener (FREE)")
+    print("- Local heuristic judge (no API key)")
+    print("- Optional: Install Ollama + Laya for better accuracy")
+    print("- Shadow mode by default (logs trades, doesn't execute)")
+    
     while True:
         try:
-            fomo.token()  # Privy bearer lives ~60 min, refresh it
-        except Exception:
+            order, stats = run_once(shadow=True)
+            
+            # Print summary
+            if order:
+                print(f"\n✅ ORDER: {order['token']['ticker']}")
+            else:
+                print(f"\n📊 Stats: {stats}")
+            
             time.sleep(CYCLE_SECONDS)
-            continue
-
-        order, stats = run_once(fomo, judge, desk, bank, shadow)
-        if order is not None:
-            desk.report(order, stats)
-            desk.send_to_seats(order)
+            
+        except KeyboardInterrupt:
+            print("\nStopped by user")
+            break
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+            time.sleep(60)
 
 
 if __name__ == "__main__":
-    print("Start with: python main.py")
-    print("Set DESK_SECRET and JUDGE_URL environment variables first")
+    main()

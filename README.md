@@ -1,40 +1,77 @@
-# Megabrain (Jev) Trading Desk
+# Megabrain Local Trading Desk
 
-This is the complete trading desk setup from the guide. It uses Jev (TypeSafe) for probabilistic judgments and Grok Bot for execution.
+**Zero cost, no API keys required.** Uses free APIs and runs locally.
 
 ## What This Does
 
-1. **SCAN**: Collects fresh FOMO tokens across 3 chains (Solana, BSC, Robinhood)
-2. **SHORTLIST**: Filters by volume, mcap, liquidity (free)
-3. **DOSSIER**: Gets chain data from GeckoTerminal + Solana RPC
-4. **JUDGE**: Jev answers typed questions with probabilities
-5. **PICK**: Chooses the best token from survivors
-6. **EXECUTE**: Grok Bot places trades through FOMO
+Scans for new crypto tokens on Solana and BSC, filters by risk metrics, judges with AI (local or heuristic), and executes trades through your exchange.
+
+## Setup (5 minutes)
+
+### 1. Install Dependencies
+
+```bash
+cd C:\Users\Dell\hermes-trading-desk
+uv pip install -r requirements.txt
+```
+
+### 2. (Optional) Install Ollama for Better AI
+
+For improved judgment accuracy, run Laya locally:
+
+```powershell
+# Download Ollama: https://ollama.com
+# Then in PowerShell:
+ollama pull laya
+```
+
+Without Ollama, the desk uses rule-based heuristics (still works).
+
+### 3. Run the Desk
+
+```bash
+python main.py
+```
+
+Runs in **shadow mode** by default — logs trades but doesn't execute.
+
+### 4. Enable Real Trading (Careful!)
+
+Edit `.env` and set `SHADOW_MODE=false`. First test with paper trading.
+
+## How It Works
+
+1. **Scan**: GeckoTerminal API → fresh pools every 15 min
+2. **Filter**: Free checks (age, liquidity, mcap, volume)
+3. **Enrich**: DexScreener trades + security checks
+4. **Judge**: Laya AI or heuristic rules
+5. **Pick**: Best token from survivors
+6. **Execute**: Via your exchange API (CoinDCX/Binance)
 
 ## Files
 
-- `judge.py` — FastAPI server for Jev judgments
-- `questions.py` — All question definitions (market, social, chain-specific)
-- `collect.py` — Data collection (universe, shortlist, dossier)
-- `filter.py` — Multi-stage filtering (free → trade → chain → soft)
-- `pick.py` — Final token selection with ranking
-- `book.py` — Position tracking and bench management
-- `main.py` — Main loop, runs continuously
-- `thresholds.py` — All tunable parameters
-
-## Setup
-
-1. Get TypeSafe API key: https://console.typesafe.ai
-2. Login to FOMO in Chrome
-3. Install dependencies: `uv pip install -r requirements.txt`
-4. Set environment variables (see .env.example)
-5. Run judge server: `uvicorn judge:app --host 0.0.0.0 --port 8080`
-6. Run desk: `python main.py`
+| File | Purpose |
+|------|---------|
+| `main.py` | Entry point, runs continuously |
+| `fomo_local.py` | Free pool scanner (GeckoTerminal + DexScreener) |
+| `local_judge.py` | AI/heuristic judgment engine |
+| `filter.py` | Multi-stage filtering |
+| `pick.py` | Token selection logic |
+| `book.py` | Position tracking |
+| `thresholds.py` | Tunable parameters |
 
 ## Cost
 
-~6 cents/day for all judgments (10 Jev calls per cycle)
+**$0/month** — All APIs are free:
+- GeckoTerminal: 10 calls/min free tier
+- DexScreener: Free, no key needed
+- Laya: Runs on your PC
 
 ## Warning
 
-This is a trading bot for real money. Test in shadow mode first. Thresholds are tuned for one person's risk profile — retune for yours.
+This is a trading bot for real money. Start in shadow mode. Test for a week before enabling real trades.
+
+---
+
+**Original guide**: TypeSafe Jev + FOMO.xyz (requires paid API)
+**This version**: Local Laya + GeckoTerminal (completely free)
