@@ -94,8 +94,8 @@ def scan_universe(networks=("solana", "bsc"), pools_per_network: int = 20) -> li
                 "net": NET_MAP.get(net, 1399811149),
                 "net_name": net,
                 "ticker": ticker,
-                "mcap_usd": float(attrs.get("market_cap_usd", 0) or 0),
-                "liquidity_usd": float(attrs.get("reserve_usd", 0) or 0),
+                "mcap_usd": float(attrs.get("fdv_usd", 0) or 0) or float(attrs.get("market_cap_usd", 0) or 0),
+                "liquidity_usd": float(attrs.get("reserve_in_usd", 0) or 0) or float(attrs.get("reserve_usd", 0) or 0),
                 "price_usd": float(attrs.get("base_token_price_usd", 0) or 0),
                 "age_minutes": _age_from_pool(attrs.get("pool_created_at", "")),
                 "change": {
